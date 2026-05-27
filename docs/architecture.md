@@ -10,22 +10,22 @@
 ## 2. 系统组成
 
 ```text
-admin-web      调度后台（PC）
-driver-miniapp 司机端（微信小程序）
-pit-h5         坑口端（PAD/H5）
-api            NestJS 业务服务
-postgres       业务数据
-redis          队列、缓存、短期状态
-ws-gateway     实时推送
+admin-web   调度后台（Vite Web）
+driver-app  司机端（Flutter）
+pit-app     坑口端（Flutter）
+api         Rust 业务服务
+postgres    业务数据
+redis       队列、缓存、短期状态
+ws-gateway  实时推送
 ```
 
 ## 3. 逻辑分层
 
 ### 3.1 前端层
 
-- 后台 Web：调度、管理、统计
-- 小程序：司机任务、排队、历史记录
-- 坑口端 H5：扫码核验、叫号、装车、称重提交
+- 后台 Web：调度、管理、统计，基于 Vite
+- 司机端 App：司机任务、排队、历史记录，基于 Flutter
+- 坑口端 App：扫码核验、叫号、装车、称重提交，基于 Flutter
 
 ### 3.2 应用层
 
@@ -51,8 +51,9 @@ ws-gateway     实时推送
 
 ### 4.1 后端
 
-- 使用 NestJS 作为主服务框架
-- 使用 Prisma 或 TypeORM 管理 ORM 和迁移
+- 使用 Rust 作为主服务语言
+- 使用 `axum` 提供 HTTP API 和 WebSocket
+- 使用 `sqlx` 管理数据库访问和迁移
 - 使用 WebSocket 推送调度变化和叫号消息
 - 所有写操作引入幂等控制和状态校验
 
@@ -65,7 +66,7 @@ ws-gateway     实时推送
 
 ### 4.3 弱网处理
 
-- 小程序和坑口端缓存当前任务和最近一次操作
+- Flutter 移动端缓存当前任务和最近一次操作
 - 写接口采用客户端请求 ID，服务端去重
 - 对关键动作提供“提交中 / 已提交待同步 / 已成功”三态提示
 
@@ -121,7 +122,7 @@ ws-gateway     实时推送
 
 ### 一期最小部署
 
-- 1 台应用服务器：Nginx + API + WebSocket
+- 1 台应用服务器：Nginx + Rust API + WebSocket
 - 1 台数据库服务器：PostgreSQL + Redis
 - 对象存储预留给图片和附件
 
@@ -151,12 +152,13 @@ ws-gateway     实时推送
 ```text
 apps/
   admin-web/
-  driver-miniapp/
-  pit-h5/
+  driver-app/
+  pit-app/
   api/
-packages/
-  shared-types/
-  shared-utils/
+crates/
+  domain/
+  application/
+  infrastructure/
 db/
 docs/
 infra/
