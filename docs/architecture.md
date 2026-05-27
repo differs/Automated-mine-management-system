@@ -169,6 +169,18 @@ ws-gateway  实时推送
 - `POST /api/v1/queue/waybills/:waybill_id/join`
 - `POST /api/v1/queue/waybills/:waybill_id/call-next`
 - `POST /api/v1/queue/waybills/:waybill_id/leave`
+- `POST /api/v1/loading/waybills/:waybill_id/start`
+- `POST /api/v1/loading/waybills/:waybill_id/finish`
+- `POST /api/v1/weighing/waybills/:waybill_id`
+
+当前已经接入真实 PostgreSQL 落库的流程节点为：
+
+- `driver` 创建 / 列表 / 详情
+- `pit` 创建 / 列表 / 详情
+- `waybill` 创建 / 派单 / 到场 / 取消
+- `queue join / call-next / leave`
+- `loading start / finish`
+- `weighing create`，并在当前 MVP 中直接完成运单
 
 ## 10. 建议 Monorepo 结构
 

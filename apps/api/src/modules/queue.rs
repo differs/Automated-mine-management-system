@@ -199,6 +199,7 @@ async fn join_queue(
 }
 
 async fn call_next(
+    State(state): State<AppState>,
     Path(waybill_id): Path<Uuid>,
     Json(payload): Json<QueueActionRequest>,
 ) -> Result<Json<QueueActionResponse>, ApiError> {
@@ -206,15 +207,11 @@ async fn call_next(
         return Err(ApiError::bad_request("operator_id is required"));
     }
 
-    Ok(Json(QueueActionResponse {
-        waybill_id,
-        status: "loading".to_string(),
-        queue_position: Some(1),
-        at: Utc::now(),
-    }))
+    close_queue_entry(state, waybill_id, payload.operator_id, "called").await
 }
 
 async fn leave_queue(
+    State(state): State<AppState>,
     Path(waybill_id): Path<Uuid>,
     Json(payload): Json<QueueActionRequest>,
 ) -> Result<Json<QueueActionResponse>, ApiError> {
@@ -224,10 +221,93 @@ async fn leave_queue(
         ));
     }
 
+    close_queue_entry(state, waybill_id, payload.operator_id, "left_queue").await
+}
+
+async fn close_queue_entry(
+    state: AppState,
+    waybill_id: Uuid,
+    operator_id: Uuid,
+    response_status: &'static str,
+) -> Result<Json<QueueActionResponse>, ApiError> {
+    let mut tx = state
+        .db
+        .begin()
+        .await
+        .map_err(|err| ApiError::internal(format!("failed to begin queue close transaction: {err}")))?;
+
+    let waybill_row = sqlx::query(
+        "SELECT pit_id, status::text AS status FROM waybills WHERE id = $1 FOR UPDATE",
+    )
+    .bind(waybill_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|err| ApiError::internal(format!("failed to lock waybill for queue close: {err}")))?;
+
+    let Some(waybill_row) = waybill_row else {
+        return Err(ApiError::not_found("waybill not found"));
+    };
+
+    let pit_id: Uuid = waybill_row.get("pit_id");
+    let status: String = waybill_row.get("status");
+
+    if status != "queueing" {
+        return Err(ApiError::conflict("only queueing waybills can be called or leave queue"));
+    }
+
+    let now = Utc::now();
+    let queue_row = sqlx::query(
+        "UPDATE queue_logs SET exit_queue_time = $2, created_by = COALESCE(created_by, $3) \
+         WHERE waybill_id = $1 AND exit_queue_time IS NULL \
+         RETURNING queue_position",
+    )
+    .bind(waybill_id)
+    .bind(now)
+    .bind(operator_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|err| ApiError::internal(format!("failed to close queue log: {err}")))?;
+
+    let Some(queue_row) = queue_row else {
+        return Err(ApiError::conflict("active queue log not found for this waybill"));
+    };
+
+    let queue_position: i32 = queue_row.get("queue_position");
+
+    sqlx::query(
+        "UPDATE waybills SET status = 'arrived', queue_exit_time = $2, updated_at = $2, \
+         version = version + 1 WHERE id = $1",
+    )
+    .bind(waybill_id)
+    .bind(now)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| ApiError::internal(format!("failed to update waybill after queue close: {err}")))?;
+
+    let current_queue_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM queue_logs WHERE pit_id = $1 AND exit_queue_time IS NULL",
+    )
+    .bind(pit_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|err| ApiError::internal(format!("failed to recalculate pit queue count: {err}")))?;
+
+    sqlx::query("UPDATE pits SET current_queue_count = $2, updated_at = $3 WHERE id = $1")
+        .bind(pit_id)
+        .bind(current_queue_count as i32)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| ApiError::internal(format!("failed to refresh pit queue count: {err}")))?;
+
+    tx.commit()
+        .await
+        .map_err(|err| ApiError::internal(format!("failed to commit queue close: {err}")))?;
+
     Ok(Json(QueueActionResponse {
         waybill_id,
-        status: "left_queue".to_string(),
-        queue_position: None,
-        at: Utc::now(),
+        status: response_status.to_string(),
+        queue_position: Some(queue_position),
+        at: now,
     }))
 }
