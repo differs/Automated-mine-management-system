@@ -5,6 +5,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sqlx::{FromRow, Row};
 use uuid::Uuid;
 
 use crate::{error::ApiError, state::AppState};
@@ -38,6 +39,14 @@ pub struct QueueEntry {
     pub entered_at: DateTime<Utc>,
 }
 
+#[derive(FromRow)]
+struct QueueEntryRow {
+    waybill_id: Uuid,
+    driver_id: Uuid,
+    queue_position: i32,
+    entered_at: DateTime<Utc>,
+}
+
 #[derive(Serialize)]
 pub struct QueueActionResponse {
     pub waybill_id: Uuid,
@@ -49,26 +58,31 @@ pub struct QueueActionResponse {
 async fn get_pit_queue(
     State(state): State<AppState>,
     Path(pit_id): Path<Uuid>,
-) -> Json<Vec<QueueEntry>> {
-    let _pool = &state.db;
+) -> Result<Json<Vec<QueueEntry>>, ApiError> {
+    let rows = sqlx::query_as::<_, QueueEntryRow>(
+        "SELECT waybill_id, driver_id, queue_position, enter_queue_time AS entered_at \
+         FROM queue_logs WHERE pit_id = $1 AND exit_queue_time IS NULL \
+         ORDER BY queue_position ASC, enter_queue_time ASC",
+    )
+    .bind(pit_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|err| ApiError::internal(format!("failed to load pit queue: {err}")))?;
 
-    Json(vec![
-        QueueEntry {
-            waybill_id: Uuid::new_v4(),
-            driver_id: Uuid::new_v4(),
-            queue_position: 1,
-            entered_at: Utc::now(),
-        },
-        QueueEntry {
-            waybill_id: pit_id,
-            driver_id: Uuid::new_v4(),
-            queue_position: 2,
-            entered_at: Utc::now(),
-        },
-    ])
+    Ok(Json(
+        rows.into_iter()
+            .map(|row| QueueEntry {
+                waybill_id: row.waybill_id,
+                driver_id: row.driver_id,
+                queue_position: row.queue_position,
+                entered_at: row.entered_at,
+            })
+            .collect(),
+    ))
 }
 
 async fn join_queue(
+    State(state): State<AppState>,
     Path(waybill_id): Path<Uuid>,
     Json(payload): Json<JoinQueueRequest>,
 ) -> Result<Json<QueueActionResponse>, ApiError> {
@@ -81,11 +95,106 @@ async fn join_queue(
         ));
     }
 
+    let mut tx = state
+        .db
+        .begin()
+        .await
+        .map_err(|err| ApiError::internal(format!("failed to begin queue transaction: {err}")))?;
+
+    let waybill_row = sqlx::query(
+        "SELECT driver_id, pit_id, status::text AS status FROM waybills WHERE id = $1 FOR UPDATE",
+    )
+    .bind(waybill_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|err| ApiError::internal(format!("failed to lock waybill: {err}")))?;
+
+    let Some(waybill_row) = waybill_row else {
+        return Err(ApiError::not_found("waybill not found"));
+    };
+
+    let current_driver_id: Uuid = waybill_row.get("driver_id");
+    let current_pit_id: Uuid = waybill_row.get("pit_id");
+    let current_status: String = waybill_row.get("status");
+
+    if current_driver_id != payload.driver_id || current_pit_id != payload.pit_id {
+        return Err(ApiError::conflict("waybill driver_id or pit_id does not match join request"));
+    }
+
+    if current_status == "queueing" {
+        return Err(ApiError::conflict("waybill is already in queue"));
+    }
+
+    if current_status != "arrived" {
+        return Err(ApiError::conflict("only arrived waybills can join queue"));
+    }
+
+    let pit_active = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM pits WHERE id = $1 AND is_active = TRUE)",
+    )
+    .bind(payload.pit_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|err| ApiError::internal(format!("failed to validate pit status: {err}")))?;
+
+    if !pit_active {
+        return Err(ApiError::bad_request("pit not found or inactive"));
+    }
+
+    let queue_position: i32 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(queue_position), 0) + 1 FROM queue_logs \
+         WHERE pit_id = $1 AND exit_queue_time IS NULL",
+    )
+    .bind(payload.pit_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|err| ApiError::internal(format!("failed to calculate queue position: {err}")))?;
+
+    let now = Utc::now();
+
+    sqlx::query(
+        "INSERT INTO queue_logs (pit_id, driver_id, waybill_id, enter_queue_time, queue_position) \
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(payload.pit_id)
+    .bind(payload.driver_id)
+    .bind(waybill_id)
+    .bind(now)
+    .bind(queue_position)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| ApiError::internal(format!("failed to create queue log: {err}")))?;
+
+    sqlx::query(
+        "UPDATE waybills SET status = 'queueing', queue_enter_time = $2, queue_number = $3, \
+         updated_at = $2, version = version + 1 WHERE id = $1",
+    )
+    .bind(waybill_id)
+    .bind(now)
+    .bind(queue_position)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| ApiError::internal(format!("failed to update waybill queue status: {err}")))?;
+
+    sqlx::query(
+        "UPDATE pits SET current_queue_count = $2, updated_at = $3 WHERE id = $1",
+    )
+    .bind(payload.pit_id)
+    .bind(queue_position)
+    .bind(now)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| ApiError::internal(format!("failed to refresh pit queue count: {err}")))?;
+
+    tx.commit()
+        .await
+        .map_err(|err| ApiError::internal(format!("failed to commit queue join: {err}")))?;
+
     Ok(Json(QueueActionResponse {
         waybill_id,
         status: "queueing".to_string(),
-        queue_position: Some(5),
-        at: Utc::now(),
+        queue_position: Some(queue_position),
+        at: now,
     }))
 }
 

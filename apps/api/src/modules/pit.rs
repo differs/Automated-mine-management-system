@@ -4,6 +4,7 @@ use axum::{
     routing::get,
 };
 use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::{error::ApiError, state::AppState};
@@ -32,6 +33,16 @@ pub struct PitSummary {
     pub is_active: bool,
 }
 
+#[derive(FromRow)]
+struct PitSummaryRow {
+    id: Uuid,
+    name: String,
+    code: Option<String>,
+    current_queue_count: i32,
+    avg_wait_minutes: i32,
+    is_active: bool,
+}
+
 #[derive(Serialize)]
 pub struct PitDetail {
     pub id: Uuid,
@@ -44,45 +55,106 @@ pub struct PitDetail {
     pub is_active: bool,
 }
 
-async fn list_pits(State(state): State<AppState>) -> Json<Vec<PitSummary>> {
-    let _pool = &state.db;
-
-    Json(vec![PitSummary {
-        id: Uuid::new_v4(),
-        name: "1号坑".to_string(),
-        code: "PIT-001".to_string(),
-        current_queue_count: 4,
-        avg_wait_minutes: 18,
-        is_active: true,
-    }])
+#[derive(FromRow)]
+struct PitDetailRow {
+    id: Uuid,
+    name: String,
+    code: Option<String>,
+    location_text: Option<String>,
+    queue_capacity: Option<i32>,
+    current_queue_count: i32,
+    avg_wait_minutes: i32,
+    is_active: bool,
 }
 
-async fn create_pit(Json(payload): Json<CreatePitRequest>) -> Result<Json<PitDetail>, ApiError> {
+async fn list_pits(State(state): State<AppState>) -> Result<Json<Vec<PitSummary>>, ApiError> {
+    let rows = sqlx::query_as::<_, PitSummaryRow>(
+        "SELECT id, name, code, current_queue_count, avg_wait_minutes, is_active \
+         FROM pits ORDER BY created_at DESC LIMIT 100",
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(|err| ApiError::internal(format!("failed to list pits: {err}")))?;
+
+    Ok(Json(
+        rows.into_iter()
+            .map(|row| PitSummary {
+                id: row.id,
+                name: row.name,
+                code: row.code.unwrap_or_default(),
+                current_queue_count: row.current_queue_count,
+                avg_wait_minutes: row.avg_wait_minutes,
+                is_active: row.is_active,
+            })
+            .collect(),
+    ))
+}
+
+async fn create_pit(
+    State(state): State<AppState>,
+    Json(payload): Json<CreatePitRequest>,
+) -> Result<Json<PitDetail>, ApiError> {
     if payload.name.trim().is_empty() {
         return Err(ApiError::bad_request("pit name is required"));
     }
 
+    let row = sqlx::query_as::<_, PitDetailRow>(
+        "INSERT INTO pits (name, code, location_text, queue_capacity) \
+         VALUES ($1, $2, $3, $4) \
+         RETURNING id, name, code, location_text, queue_capacity, \
+         current_queue_count, avg_wait_minutes, is_active",
+    )
+    .bind(payload.name.trim())
+    .bind(payload.code.as_deref().map(str::trim))
+    .bind(payload.location_text.as_deref().map(str::trim))
+    .bind(payload.queue_capacity)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|err| {
+        if let sqlx::Error::Database(db_err) = &err
+            && db_err.is_unique_violation()
+        {
+            return ApiError::conflict("pit name or code already exists");
+        }
+        ApiError::internal(format!("failed to create pit: {err}"))
+    })?;
+
     Ok(Json(PitDetail {
-        id: Uuid::new_v4(),
-        name: payload.name,
-        code: payload.code.unwrap_or_else(|| "PIT-AUTO".to_string()),
-        location_text: payload.location_text,
-        queue_capacity: payload.queue_capacity,
-        current_queue_count: 0,
-        avg_wait_minutes: 0,
-        is_active: true,
+        id: row.id,
+        name: row.name,
+        code: row.code.unwrap_or_default(),
+        location_text: row.location_text,
+        queue_capacity: row.queue_capacity,
+        current_queue_count: row.current_queue_count,
+        avg_wait_minutes: row.avg_wait_minutes,
+        is_active: row.is_active,
     }))
 }
 
-async fn get_pit(Path(pit_id): Path<Uuid>) -> Json<PitDetail> {
-    Json(PitDetail {
-        id: pit_id,
-        name: "1号坑".to_string(),
-        code: "PIT-001".to_string(),
-        location_text: Some("贵州矿区东侧".to_string()),
-        queue_capacity: Some(20),
-        current_queue_count: 4,
-        avg_wait_minutes: 18,
-        is_active: true,
-    })
+async fn get_pit(
+    State(state): State<AppState>,
+    Path(pit_id): Path<Uuid>,
+) -> Result<Json<PitDetail>, ApiError> {
+    let row = sqlx::query_as::<_, PitDetailRow>(
+        "SELECT id, name, code, location_text, queue_capacity, \
+         current_queue_count, avg_wait_minutes, is_active \
+         FROM pits WHERE id = $1",
+    )
+    .bind(pit_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|err| ApiError::internal(format!("failed to fetch pit: {err}")))?;
+
+    let row = row.ok_or_else(|| ApiError::not_found("pit not found"))?;
+
+    Ok(Json(PitDetail {
+        id: row.id,
+        name: row.name,
+        code: row.code.unwrap_or_default(),
+        location_text: row.location_text,
+        queue_capacity: row.queue_capacity,
+        current_queue_count: row.current_queue_count,
+        avg_wait_minutes: row.avg_wait_minutes,
+        is_active: row.is_active,
+    }))
 }
