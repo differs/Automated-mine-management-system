@@ -1,0 +1,95 @@
+:root {
+  font-family: "Segoe UI", "PingFang SC", sans-serif;
+  color: #f7f2e8;
+  background:
+    radial-gradient(circle at top, rgba(208, 134, 47, 0.32), transparent 38%),
+    linear-gradient(160deg, #1c1612 0%, #2d241d 52%, #473528 100%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+.shell {
+  width: min(1120px, calc(100vw - 40px));
+  margin: 0 auto;
+  padding: 64px 0 80px;
+}
+
+.hero {
+  max-width: 760px;
+  margin-bottom: 36px;
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #e0b36d;
+  font-size: 12px;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(2.4rem, 6vw, 4.6rem);
+  line-height: 0.95;
+}
+
+.intro {
+  margin: 18px 0 0;
+  max-width: 620px;
+  color: rgba(247, 242, 232, 0.82);
+  font-size: 1.05rem;
+  line-height: 1.7;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 18px;
+}
+
+.card {
+  padding: 22px;
+  border-radius: 22px;
+  background: rgba(255, 248, 239, 0.08);
+  border: 1px solid rgba(255, 214, 164, 0.18);
+  backdrop-filter: blur(8px);
+}
+
+.label {
+  display: inline-block;
+  margin-bottom: 14px;
+  color: #f0c58c;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+h2 {
+  margin: 0 0 10px;
+  font-size: 1.3rem;
+}
+
+.card p {
+  margin: 0;
+  color: rgba(247, 242, 232, 0.76);
+  line-height: 1.65;
+}
+
+@media (max-width: 640px) {
+  .shell {
+    width: min(100vw - 28px, 1120px);
+    padding-top: 40px;
+  }
+
+  h1 {
+    line-height: 1.04;
+  }
+}

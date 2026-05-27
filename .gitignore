@@ -1,0 +1,25 @@
+# OS / Editor
+.DS_Store
+.idea/
+.vscode/
+
+# Node / Vite
+node_modules/
+dist/
+.npm/
+
+# Rust
+target/
+
+# Flutter / Dart
+.dart_tool/
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+.metadata
+build/
+
+# Env
+.env
+.env.*
+

@@ -1,0 +1,13 @@
+{
+  "name": "automated-mine-management-system",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/admin-web"
+  ],
+  "scripts": {
+    "dev:admin": "npm --workspace apps/admin-web run dev",
+    "build:admin": "npm --workspace apps/admin-web run build"
+  }
+}
+

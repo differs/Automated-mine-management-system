@@ -62,7 +62,20 @@
 - `docs/product-overview.md`：偏产品视角的项目介绍
 - `docs/requirements-baseline.md`：一期需求基线
 - `docs/architecture.md`：系统架构和技术实现建议
+- `docs/scenario-coverage-analysis.md`：真实场景覆盖度分析
 - `db/init.sql`：PostgreSQL 初版建表脚本
+
+## Monorepo 结构
+
+```text
+apps/
+  admin-web/   Vite 调度后台
+  api/         Rust API 服务
+  driver-app/  Flutter 司机端
+  pit-app/     Flutter 坑口端
+db/
+docs/
+```
 
 ## 第一阶段目标
 

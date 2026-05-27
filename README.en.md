@@ -62,7 +62,20 @@ Recommended Rust stack:
 - `docs/product-overview.md`: product-facing project introduction
 - `docs/requirements-baseline.md`: MVP requirements baseline
 - `docs/architecture.md`: architecture and implementation guidance
+- `docs/scenario-coverage-analysis.md`: field-scenario coverage review
 - `db/init.sql`: initial PostgreSQL schema
+
+## Monorepo Layout
+
+```text
+apps/
+  admin-web/   Vite admin console
+  api/         Rust API service
+  driver-app/  Flutter driver app
+  pit-app/     Flutter pit operation app
+db/
+docs/
+```
 
 ## Phase-One Goal
 
