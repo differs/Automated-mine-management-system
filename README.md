@@ -64,6 +64,7 @@
 - `docs/architecture.md`：系统架构和技术实现建议
 - `docs/scenario-coverage-analysis.md`：真实场景覆盖度分析
 - `db/init.sql`：PostgreSQL 初版建表脚本
+- `db/migrations/`：一期建表和真实场景扩展迁移
 
 ## Monorepo 结构
 
@@ -76,6 +77,18 @@ apps/
 db/
 docs/
 ```
+
+## 当前后端 API 骨架
+
+一期已搭好的资源组：
+
+- `auth`：登录、刷新令牌
+- `driver`：司机列表、详情、创建、导入
+- `pit`：坑口列表、详情、创建
+- `waybill`：运单列表、详情、创建、派单、到场、取消
+- `queue`：坑口队列查看、入队、叫号、离队
+
+当前阶段先提供稳定的路由边界、请求结构和返回结构，后续再把 mock 响应逐步替换为真实数据库读写。
 
 ## 第一阶段目标
 

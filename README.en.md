@@ -64,6 +64,7 @@ Recommended Rust stack:
 - `docs/architecture.md`: architecture and implementation guidance
 - `docs/scenario-coverage-analysis.md`: field-scenario coverage review
 - `db/init.sql`: initial PostgreSQL schema
+- `db/migrations/`: MVP and field-extension SQL migrations
 
 ## Monorepo Layout
 
@@ -76,6 +77,18 @@ apps/
 db/
 docs/
 ```
+
+## Current Backend API Skeleton
+
+The phase-one resource groups already scaffolded are:
+
+- `auth`: login and token refresh
+- `driver`: list, detail, create, import
+- `pit`: list, detail, create
+- `waybill`: list, detail, create, dispatch, arrive, cancel
+- `queue`: pit queue view, join, call-next, leave
+
+At this stage the backend provides stable route boundaries, request shapes, and response shapes. The next step is replacing mock payloads with real database-backed flows.
 
 ## Phase-One Goal
 

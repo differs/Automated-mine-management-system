@@ -56,6 +56,7 @@ ws-gateway  实时推送
 - 使用 `sqlx` 管理数据库访问和迁移
 - 使用 WebSocket 推送调度变化和叫号消息
 - 所有写操作引入幂等控制和状态校验
+- 一期先按模块拆出 `auth / driver / pit / waybill / queue` 五组资源路由
 
 ### 4.2 实时队列
 
@@ -146,6 +147,28 @@ ws-gateway  实时推送
 - `POST /waybills/:id/weigh`
 - `POST /waybills/:id/cancel`
 - `GET /dashboard/overview`
+
+当前 Rust 骨架已落地的实际前缀为：
+
+- `POST /api/v1/auth/login`
+- `POST /api/v1/auth/refresh`
+- `GET /api/v1/drivers`
+- `POST /api/v1/drivers`
+- `POST /api/v1/drivers/import`
+- `GET /api/v1/drivers/:driver_id`
+- `GET /api/v1/pits`
+- `POST /api/v1/pits`
+- `GET /api/v1/pits/:pit_id`
+- `GET /api/v1/waybills`
+- `POST /api/v1/waybills`
+- `GET /api/v1/waybills/:waybill_id`
+- `POST /api/v1/waybills/:waybill_id/dispatch`
+- `POST /api/v1/waybills/:waybill_id/arrive`
+- `POST /api/v1/waybills/:waybill_id/cancel`
+- `GET /api/v1/queue/pits/:pit_id`
+- `POST /api/v1/queue/waybills/:waybill_id/join`
+- `POST /api/v1/queue/waybills/:waybill_id/call-next`
+- `POST /api/v1/queue/waybills/:waybill_id/leave`
 
 ## 10. 建议 Monorepo 结构
 
