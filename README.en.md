@@ -78,6 +78,40 @@ db/
 docs/
 ```
 
+## Local Run
+
+Start PostgreSQL, run migrations, and launch the API:
+
+```bash
+docker compose up --build
+```
+
+PostgreSQL stays inside the compose network to avoid conflicts with existing host databases. The API is still exposed on local port `3000`.
+
+Run migrations only:
+
+```bash
+cargo run -p api --bin migrate
+```
+
+Run API integration tests:
+
+```bash
+docker compose run --rm api-test
+```
+
+If you run tests directly on the host, provide a PostgreSQL connection that can create temporary test databases, for example:
+
+```bash
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres cargo test -p api
+```
+
+Collection routes are currently used without a trailing slash, for example:
+
+- `POST /api/v1/drivers`
+- `POST /api/v1/pits`
+- `POST /api/v1/waybills`
+
 ## Current Backend API Skeleton
 
 The phase-one resource groups already scaffolded are:
@@ -89,6 +123,15 @@ The phase-one resource groups already scaffolded are:
 - `queue`: pit queue view, join, call-next, leave
 
 At this stage the backend provides stable route boundaries, request shapes, and response shapes. The next step is replacing mock payloads with real database-backed flows.
+
+The main production flow already backed by PostgreSQL includes:
+
+- driver create, list, detail
+- pit create, list, detail
+- waybill create, dispatch, arrive, cancel
+- queue join, call-next, manual leave
+- loading start and finish
+- weighing and completion
 
 ## Phase-One Goal
 

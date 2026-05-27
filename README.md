@@ -78,6 +78,40 @@ db/
 docs/
 ```
 
+## 本地运行
+
+启动数据库、执行迁移并拉起 API：
+
+```bash
+docker compose up --build
+```
+
+PostgreSQL 只在 compose 内网暴露，避免和宿主机现有数据库冲突。API 仍然会暴露在本机 `3000` 端口。
+
+单独执行迁移：
+
+```bash
+cargo run -p api --bin migrate
+```
+
+运行 API 集成测试：
+
+```bash
+docker compose run --rm api-test
+```
+
+如果直接在宿主机运行测试，需要先提供一个可创建临时测试库的 PostgreSQL 连接，例如：
+
+```bash
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres cargo test -p api
+```
+
+当前 API 集合资源路径按无尾斜杠约定使用，例如：
+
+- `POST /api/v1/drivers`
+- `POST /api/v1/pits`
+- `POST /api/v1/waybills`
+
 ## 当前后端 API 骨架
 
 一期已搭好的资源组：
@@ -89,8 +123,6 @@ docs/
 - `queue`：坑口队列查看、入队、叫号、离队
 
 当前阶段先提供稳定的路由边界、请求结构和返回结构，后续再把 mock 响应逐步替换为真实数据库读写。
-
-当前已经接入真实数据库的主链路包括：
 
 - 司机创建、列表、详情
 - 坑口创建、列表、详情

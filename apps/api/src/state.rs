@@ -12,8 +12,15 @@ impl AppState {
     pub async fn bootstrap(config: AppConfig) -> anyhow::Result<Self> {
         let db = PgPoolOptions::new()
             .max_connections(10)
-            .connect_lazy(&config.database_url)?;
+            .connect(&config.database_url)
+            .await?;
+
+        sqlx::migrate!("../../db/migrations").run(&db).await?;
 
         Ok(Self { config, db })
+    }
+
+    pub fn from_parts(config: AppConfig, db: PgPool) -> Self {
+        Self { config, db }
     }
 }

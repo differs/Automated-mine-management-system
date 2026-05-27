@@ -1,0 +1,71 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: auto-mining-postgres
+    environment:
+      POSTGRES_DB: auto_mining_system
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d auto_mining_system"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: auto-mining-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/auto_mining_system
+      RUST_LOG: warn
+      JWT_SECRET: local-dev-secret
+    command: ["migrate"]
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: auto-mining-api
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: 3000
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/auto_mining_system
+      RUST_LOG: info
+      JWT_SECRET: local-dev-secret
+    ports:
+      - "3000:3000"
+
+  api-test:
+    image: rust:1.88-bookworm
+    container_name: auto-mining-api-test
+    working_dir: /workspace
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/postgres
+      RUST_LOG: warn
+      JWT_SECRET: local-dev-secret
+    volumes:
+      - ./:/workspace
+      - cargo_registry:/usr/local/cargo/registry
+      - cargo_git:/usr/local/cargo/git
+      - cargo_target:/workspace/target
+    command: ["bash", "-lc", "/usr/local/cargo/bin/cargo test -p api"]
+
+volumes:
+  postgres_data:
+  cargo_registry:
+  cargo_git:
+  cargo_target:

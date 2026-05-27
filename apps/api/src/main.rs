@@ -1,11 +1,6 @@
-mod app;
-mod config;
-mod error;
-mod modules;
-mod state;
-
 use std::net::SocketAddr;
 
+use api::{app, config, state};
 use anyhow::Context;
 use tokio::net::TcpListener;
 use tracing::info;
