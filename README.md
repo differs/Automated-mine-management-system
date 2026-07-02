@@ -57,12 +57,35 @@
 - `redis`：实时队列和状态缓存
 - `serde`：序列化
 
-## 当前仓库内容
+## ## 算法说明
 
-- `docs/product-overview.md`：偏产品视角的项目介绍
-- `docs/requirements-baseline.md`：一期需求基线
-- `docs/architecture.md`：系统架构和技术实现建议
-- `docs/scenario-coverage-analysis.md`：真实场景覆盖度分析
+调度算法基于 **通用框架 + 地形适配** 设计：
+- 每个矿山的坑口布局、道路条件不同，算法参数按现场数据调参
+- 支持纯算法模式和AI增强模式，运行时可通过API切换
+- 详见 `docs/dispatch-algorithm.md`
+
+当前仓库内容
+
+### 文档目录
+
+| 文档 | 说明 |
+|------|------|
+| `docs/product-overview.md` | 产品概览 |
+| `docs/requirements-baseline.md` | 一期需求基线 |
+| `docs/architecture.md` | 系统架构和技术实现建议 |
+| `docs/scenario-coverage-analysis.md` | 真实场景覆盖度分析 |
+| `docs/api-reference.md` | 完整 API 参考文档 |
+| `docs/deployment-guide.md` | 开发/生产部署指南 |
+| `docs/database-schema.md` | 数据库 Schema 说明 |
+| `docs/development-guide.md` | 开发指南（含需求覆盖状态） |
+| `docs/user-manual.md` | 用户操作手册 |
+| `docs/phase-plan.md` | 分期实施计划 |
+| `docs/contact-info.md` | 投递联系信息 |
+| `docs/real-site-adaptation-analysis.md` | 实际矿山场景适配分析 |
+| `docs/requirement-coverage-analysis.md` | 招聘需求 vs 系统实现覆盖分析 |
+
+### 数据库
+
 - `db/init.sql`：PostgreSQL 初版建表脚本
 - `db/migrations/`：一期建表和真实场景扩展迁移
 
@@ -70,23 +93,62 @@
 
 ```text
 apps/
-  admin-web/   Vite 调度后台
-  api/         Rust API 服务
-  driver-app/  Flutter 司机端
-  pit-app/     Flutter 坑口端
+  admin-web/      Vite 调度后台（Vue 3）
+  api/            Rust API 服务
+  driver-app/     Flutter 司机端（规划中）
+  driver-miniapp/ 司机端 Vue 3 应用（浏览器/小程序）
+  pit-app/        Flutter 坑口端（规划中）
+  pit-h5/         坑口端 Vue 3 应用（浏览器/小程序）
+  demo-hub/       演示中心门户
 db/
 docs/
 ```
 
 ## 本地运行
 
-启动数据库、执行迁移并拉起 API：
+### 启动后端
+
+启动数据库、Redis、执行迁移并拉起 API：
 
 ```bash
 docker compose up --build
 ```
 
-PostgreSQL 只在 compose 内网暴露，避免和宿主机现有数据库冲突。API 仍然会暴露在本机 `3000` 端口。
+PostgreSQL 和 Redis 在 compose 内网运行。API 暴露在本机 `3000` 端口。
+
+### 启动前端（浏览器直接预览）
+
+```bash
+# 安装依赖（首次）
+npm install
+
+# 调度后台（端口 5173）
+npm run dev:admin
+
+# 司机端（端口 5174）
+npm run dev:driver
+
+# 坑口端（端口 5175）
+npm run dev:pit
+
+# 演示中心门户（端口 5180）
+npm run dev:demo
+```
+
+所有前端开发服务器会自动代理 `/api` 请求到 `localhost:3000`。
+
+### 构建前端
+
+```bash
+# 构建全部前端
+npm run build:all
+
+# 或单独构建某个应用
+npm run build:admin
+npm run build:driver
+npm run build:pit
+npm run build:demo
+```
 
 单独执行迁移：
 

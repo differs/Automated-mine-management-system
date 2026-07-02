@@ -1,6 +1,6 @@
 use api::{
     app,
-    config::AppConfig,
+    config::{AiConfig, AppConfig, DispatchMode},
     state::AppState,
 };
 use axum::{
@@ -18,7 +18,8 @@ async fn dispatch_flow_completes_waybill(pool: PgPool) {
     seed_user(&pool, "pit-operator", "pit_operator").await;
     seed_user(&pool, "weigh-operator", "weigh_operator").await;
 
-    let app = app::build_router(AppState::from_parts(test_config(), pool));
+    let state = AppState::for_test(test_config(), pool).await;
+    let app = app::build_router(state);
 
     let driver = post_json(
         &app,
@@ -157,7 +158,8 @@ async fn dispatch_flow_completes_waybill(pool: PgPool) {
 
 #[sqlx::test(migrations = "../../db/migrations")]
 async fn queue_join_requires_arrived_status(pool: PgPool) {
-    let app = app::build_router(AppState::from_parts(test_config(), pool));
+    let state = AppState::for_test(test_config(), pool).await;
+    let app = app::build_router(state);
 
     let driver = post_json(
         &app,
@@ -219,9 +221,28 @@ fn test_config() -> AppConfig {
         host: "127.0.0.1".to_string(),
         port: 3000,
         database_url: "postgres://postgres:postgres@localhost:5432/auto_mining_system".to_string(),
+        redis_url: "redis://localhost:6379".to_string(),
         rust_log: "warn".to_string(),
         jwt_secret: "test-secret".to_string(),
+        dispatch_mode: DispatchMode::PureAlgorithm,
+        ai: AiConfig {
+            enabled: false,
+            api_url: String::new(),
+            api_key: String::new(),
+            model: String::new(),
+        },
     }
+}
+
+/// 生成测试用 JWT token
+fn test_token(role: &str) -> String {
+    api::middleware::auth::create_token(
+        "test-secret",
+        uuid::Uuid::new_v4(),
+        role,
+        "test-user",
+    )
+    .unwrap()
 }
 
 fn seeded_uuid(label: &str) -> String {
@@ -266,10 +287,12 @@ async fn get_json(
     path: &str,
     expected_status: StatusCode,
 ) -> Value {
+    let token = test_token("dispatcher");
     let request = Request::builder()
         .method("GET")
         .uri(path)
         .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {token}"))
         .body(Body::empty())
         .unwrap();
 
@@ -287,10 +310,12 @@ async fn request_json(
     path: &str,
     payload: Value,
 ) -> (StatusCode, Value) {
+    let token = test_token("dispatcher");
     let request = Request::builder()
         .method(method)
         .uri(path)
         .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {token}"))
         .body(Body::from(payload.to_string()))
         .unwrap();
 

@@ -4,11 +4,13 @@ use axum::{
     routing::{get, post},
 };
 use chrono::{DateTime, Utc};
+use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Row};
 use uuid::Uuid;
 
 use crate::{error::ApiError, state::AppState};
+use super::ws::{broadcast_event, QueueEventPayload, QueueCallPayload, WsEvent};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -59,6 +61,13 @@ async fn get_pit_queue(
     State(state): State<AppState>,
     Path(pit_id): Path<Uuid>,
 ) -> Result<Json<Vec<QueueEntry>>, ApiError> {
+    // 优先从 Redis 读取队列计数（快速路径）
+    let redis_key = format!("queue:count:{}", pit_id);
+    let redis_count: Result<i32, _> = state.redis.clone().get(&redis_key).await;
+    if let Ok(count) = redis_count {
+        tracing::debug!("pit {pit_id} queue count from Redis: {count}");
+    }
+
     let rows = sqlx::query_as::<_, QueueEntryRow>(
         "SELECT waybill_id, driver_id, queue_position, enter_queue_time AS entered_at \
          FROM queue_logs WHERE pit_id = $1 AND exit_queue_time IS NULL \
@@ -190,6 +199,24 @@ async fn join_queue(
         .await
         .map_err(|err| ApiError::internal(format!("failed to commit queue join: {err}")))?;
 
+    // ── Redis 写穿：更新坑口队列计数缓存 ───────────────────────────
+    let redis_key = format!("queue:count:{}", payload.pit_id);
+    let _: Result<(), _> = state.redis.clone().set(&redis_key, queue_position).await;
+
+    // ── WebSocket 广播：队列更新 ──────────────────────────────────
+    let pit_name = sqlx::query_scalar::<_, String>("SELECT name FROM pits WHERE id = $1")
+        .bind(payload.pit_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    broadcast_event(&state.ws_tx, WsEvent::QueueUpdated(QueueEventPayload {
+        pit_id: payload.pit_id,
+        pit_name,
+        current_queue_count: queue_position,
+    }));
+
     Ok(Json(QueueActionResponse {
         waybill_id,
         status: "queueing".to_string(),
@@ -303,6 +330,34 @@ async fn close_queue_entry(
     tx.commit()
         .await
         .map_err(|err| ApiError::internal(format!("failed to commit queue close: {err}")))?;
+
+    // ── Redis 写穿：更新坑口队列计数缓存 ───────────────────────────
+    let redis_key = format!("queue:count:{}", pit_id);
+    let _: Result<(), _> = state.redis.clone().set(&redis_key, current_queue_count as i32).await;
+
+    // ── WebSocket 广播：叫号/离队 ──────────────────────────────────
+    let pit_name = sqlx::query_scalar::<_, String>("SELECT name FROM pits WHERE id = $1")
+        .bind(pit_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    if response_status == "called" {
+        broadcast_event(&state.ws_tx, WsEvent::QueueCalled(QueueCallPayload {
+            waybill_id,
+            driver_id: Uuid::nil(),
+            pit_id,
+            pit_name,
+            queue_position,
+        }));
+    } else {
+        broadcast_event(&state.ws_tx, WsEvent::QueueUpdated(QueueEventPayload {
+            pit_id,
+            pit_name,
+            current_queue_count: current_queue_count as i32,
+        }));
+    }
 
     Ok(Json(QueueActionResponse {
         waybill_id,

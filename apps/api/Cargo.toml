@@ -17,6 +17,27 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
 
+bcrypt = "0.17"
+jsonwebtoken = "9.3"
+redis = { version = "0.28", features = ["tokio-comp", "connection-manager"] }
+futures-util = "0.3"
+tokio-stream = "0.1"
+reqwest = { version = "0.12", features = ["json"] }
+serialport = "4"
+regex = "1"
+
+[[bin]]
+name = "api"
+path = "src/main.rs"
+
+[[bin]]
+name = "migrate"
+path = "src/bin/migrate.rs"
+
+[[bin]]
+name = "seed"
+path = "src/bin/seed.rs"
+
 [dev-dependencies]
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }

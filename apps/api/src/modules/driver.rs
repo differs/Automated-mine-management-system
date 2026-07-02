@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder};
 use uuid::Uuid;
 
-use crate::{error::ApiError, state::AppState};
+use crate::{error::ApiError, pagination::{Pagination, PagedResponse}, state::AppState};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -21,6 +21,8 @@ pub fn router() -> Router<AppState> {
 pub struct DriverListQuery {
     pub keyword: Option<String>,
     pub status: Option<String>,
+    #[serde(flatten)]
+    pub pagination: Pagination,
 }
 
 #[derive(Deserialize)]
@@ -35,7 +37,7 @@ pub struct CreateDriverRequest {
 #[derive(Deserialize)]
 pub struct ImportDriversRequest {
     pub source: String,
-    pub total_rows: usize,
+    pub drivers: Vec<CreateDriverRequest>,
 }
 
 #[derive(Serialize)]
@@ -86,13 +88,35 @@ struct DriverDetailRow {
 pub struct ImportDriversResponse {
     pub accepted: bool,
     pub source: String,
-    pub total_rows: usize,
+    pub imported: usize,
+    pub failed: usize,
+    pub errors: Vec<String>,
 }
 
 async fn list_drivers(
     State(state): State<AppState>,
     Query(query): Query<DriverListQuery>,
-) -> Result<Json<Vec<DriverSummary>>, ApiError> {
+) -> Result<Json<PagedResponse<DriverSummary>>, ApiError> {
+    let (offset, limit) = query.pagination.offset_limit();
+
+    // 先查询总数
+    let mut count_qb = QueryBuilder::new("SELECT COUNT(*)::bigint FROM drivers WHERE 1=1");
+    if let Some(keyword) = query.keyword.as_deref() {
+        let keyword = format!("%{}%", keyword.trim());
+        count_qb.push(" AND (name ILIKE ").push_bind(keyword.clone())
+            .push(" OR phone ILIKE ").push_bind(keyword.clone())
+            .push(" OR license_plate ILIKE ").push_bind(keyword).push(")");
+    }
+    if let Some(status) = query.status.as_deref() {
+        count_qb.push(" AND status::text = ").push_bind(status);
+    }
+    let total: i64 = count_qb
+        .build_query_scalar()
+        .fetch_one(&state.db)
+        .await
+        .map_err(|err| ApiError::internal(format!("failed to count drivers: {err}")))?;
+
+    // 查询数据
     let mut qb = QueryBuilder::new(
         "SELECT id, name, phone, license_plate, vehicle_type::text AS vehicle_type, \
          status::text AS status FROM drivers WHERE 1=1",
@@ -113,7 +137,10 @@ async fn list_drivers(
         qb.push(" AND status::text = ").push_bind(status);
     }
 
-    qb.push(" ORDER BY created_at DESC LIMIT 100");
+    qb.push(" ORDER BY created_at DESC LIMIT ")
+        .push_bind(limit)
+        .push(" OFFSET ")
+        .push_bind(offset);
 
     let rows = qb
         .build_query_as::<DriverSummaryRow>()
@@ -121,18 +148,24 @@ async fn list_drivers(
         .await
         .map_err(|err| ApiError::internal(format!("failed to list drivers: {err}")))?;
 
-    Ok(Json(
-        rows.into_iter()
-            .map(|row| DriverSummary {
-                id: row.id,
-                name: row.name,
-                phone: row.phone,
-                license_plate: row.license_plate,
-                vehicle_type: row.vehicle_type,
-                status: row.status,
-            })
-            .collect(),
-    ))
+    let data: Vec<DriverSummary> = rows
+        .into_iter()
+        .map(|row| DriverSummary {
+            id: row.id,
+            name: row.name,
+            phone: row.phone,
+            license_plate: row.license_plate,
+            vehicle_type: row.vehicle_type,
+            status: row.status,
+        })
+        .collect();
+
+    Ok(Json(PagedResponse::new(
+        data,
+        total,
+        query.pagination.page(),
+        query.pagination.page_size(),
+    )))
 }
 
 async fn create_driver(
@@ -199,16 +232,45 @@ async fn get_driver(
 }
 
 async fn import_drivers(
+    State(state): State<AppState>,
     Json(payload): Json<ImportDriversRequest>,
 ) -> Result<Json<ImportDriversResponse>, ApiError> {
-    if payload.total_rows == 0 {
-        return Err(ApiError::bad_request("total_rows must be greater than zero"));
+    if payload.drivers.is_empty() {
+        return Err(ApiError::bad_request("drivers list is required"));
+    }
+
+    let mut imported = 0usize;
+    let mut failed = 0usize;
+    let mut errors = Vec::new();
+
+    for (idx, driver) in payload.drivers.iter().enumerate() {
+        let result = sqlx::query(
+            "INSERT INTO drivers (name, phone, license_plate, vehicle_type, capacity_ton) \
+             VALUES ($1, $2, $3, $4::vehicle_type, $5)",
+        )
+        .bind(driver.name.trim())
+        .bind(driver.phone.trim())
+        .bind(driver.license_plate.trim())
+        .bind(driver.vehicle_type.trim())
+        .bind(driver.capacity_ton)
+        .execute(&state.db)
+        .await;
+
+        match result {
+            Ok(_) => imported += 1,
+            Err(e) => {
+                failed += 1;
+                errors.push(format!("row {}: {}", idx + 1, e));
+            }
+        }
     }
 
     Ok(Json(ImportDriversResponse {
         accepted: true,
         source: payload.source,
-        total_rows: payload.total_rows,
+        imported,
+        failed,
+        errors,
     }))
 }
 

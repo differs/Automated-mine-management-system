@@ -9,6 +9,7 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use crate::{error::ApiError, state::AppState};
+use super::ws::{broadcast_event, WeighingEventPayload, WsEvent};
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/waybills/{waybill_id}", post(create_weigh_record))
@@ -118,6 +119,20 @@ async fn create_weigh_record(
     tx.commit()
         .await
         .map_err(|err| ApiError::internal(format!("failed to commit weighing: {err}")))?;
+
+    // ── WebSocket 广播：称重完成 ──────────────────────────────────
+    let driver_id = sqlx::query_scalar::<_, Uuid>("SELECT driver_id FROM waybills WHERE id = $1")
+        .bind(waybill_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    broadcast_event(&state.ws_tx, WsEvent::WeighingCompleted(WeighingEventPayload {
+        waybill_id,
+        driver_id,
+        net_weight_ton: payload.net_weight_ton,
+    }));
 
     Ok(Json(WeighingActionResponse {
         waybill_id: updated.get("id"),

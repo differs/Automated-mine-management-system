@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Row};
 use uuid::Uuid;
 
-use crate::{error::ApiError, state::AppState};
+use tracing::trace;
+use crate::{error::ApiError, pagination::{Pagination, PagedResponse}, state::AppState};
+use super::audit_log::log_waybill_operation;
+use super::ws::{broadcast_event, WaybillEventPayload, WsEvent};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -16,6 +19,7 @@ pub fn router() -> Router<AppState> {
         .route("/{waybill_id}", get(get_waybill))
         .route("/{waybill_id}/dispatch", post(dispatch_waybill))
         .route("/{waybill_id}/arrive", post(arrive_waybill))
+        .route("/arrive-by-plate", post(arrive_by_plate))
         .route("/{waybill_id}/cancel", post(cancel_waybill))
 }
 
@@ -23,6 +27,8 @@ pub fn router() -> Router<AppState> {
 pub struct WaybillListQuery {
     pub status: Option<String>,
     pub pit_id: Option<Uuid>,
+    #[serde(flatten)]
+    pub pagination: Pagination,
 }
 
 #[derive(Deserialize)]
@@ -106,7 +112,24 @@ pub struct WaybillActionResponse {
 async fn list_waybills(
     State(state): State<AppState>,
     Query(query): Query<WaybillListQuery>,
-) -> Result<Json<Vec<WaybillSummary>>, ApiError> {
+) -> Result<Json<PagedResponse<WaybillSummary>>, ApiError> {
+    let (offset, limit) = query.pagination.offset_limit();
+
+    // 先查询总数
+    let mut count_qb = QueryBuilder::new("SELECT COUNT(*)::bigint FROM waybills WHERE 1=1");
+    if let Some(status) = query.status.as_deref() {
+        count_qb.push(" AND status::text = ").push_bind(status);
+    }
+    if let Some(pit_id) = query.pit_id {
+        count_qb.push(" AND pit_id = ").push_bind(pit_id);
+    }
+    let total: i64 = count_qb
+        .build_query_scalar()
+        .fetch_one(&state.db)
+        .await
+        .map_err(|err| ApiError::internal(format!("failed to count waybills: {err}")))?;
+
+    // 查询数据
     let mut qb = QueryBuilder::new(
         "SELECT id, serial_no, driver_id, pit_id, status::text AS status, dispatch_time \
          FROM waybills WHERE 1=1",
@@ -120,7 +143,10 @@ async fn list_waybills(
         qb.push(" AND pit_id = ").push_bind(pit_id);
     }
 
-    qb.push(" ORDER BY created_at DESC LIMIT 100");
+    qb.push(" ORDER BY created_at DESC LIMIT ")
+        .push_bind(limit)
+        .push(" OFFSET ")
+        .push_bind(offset);
 
     let rows = qb
         .build_query_as::<WaybillSummaryRow>()
@@ -128,18 +154,24 @@ async fn list_waybills(
         .await
         .map_err(|err| ApiError::internal(format!("failed to list waybills: {err}")))?;
 
-    Ok(Json(
-        rows.into_iter()
-            .map(|row| WaybillSummary {
-                id: row.id,
-                serial_no: row.serial_no,
-                driver_id: row.driver_id,
-                pit_id: row.pit_id,
-                status: row.status,
-                dispatch_time: row.dispatch_time,
-            })
-            .collect(),
-    ))
+    let data: Vec<WaybillSummary> = rows
+        .into_iter()
+        .map(|row| WaybillSummary {
+            id: row.id,
+            serial_no: row.serial_no,
+            driver_id: row.driver_id,
+            pit_id: row.pit_id,
+            status: row.status,
+            dispatch_time: row.dispatch_time,
+        })
+        .collect();
+
+    Ok(Json(PagedResponse::new(
+        data,
+        total,
+        query.pagination.page(),
+        query.pagination.page_size(),
+    )))
 }
 
 async fn create_waybill(
@@ -214,6 +246,42 @@ async fn dispatch_waybill(
         ApiError::conflict("waybill can only be dispatched from pending_dispatch status")
     })?;
 
+    // ── 操作日志 ─────────────────────────────────────────────────
+    log_waybill_operation(
+        &state.db, waybill_id, "dispatch", Some("pending_dispatch"), Some("dispatched"),
+        Some(payload.dispatcher_id), None,
+    ).await;
+
+    // ── WebSocket 广播：运单派发 ──────────────────────────────────
+    let waybill_id_val: Uuid = row.get("id");
+    if let Ok(detail) = sqlx::query_as::<_, WaybillDetailRow>(
+        "SELECT id, serial_no, driver_id, pit_id, status::text AS status, queue_number, \
+         estimated_weight_ton::double precision AS estimated_weight_ton, \
+         actual_weight_ton::double precision AS actual_weight_ton, dispatch_time, arrive_time \
+         FROM waybills WHERE id = $1",
+    )
+    .bind(waybill_id_val)
+    .fetch_optional(&state.db)
+    .await
+    {
+        if let Some(d) = detail {
+            let pit_name = sqlx::query_scalar::<_, String>("SELECT name FROM pits WHERE id = $1")
+                .bind(d.pit_id)
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            broadcast_event(&state.ws_tx, WsEvent::WaybillDispatched(WaybillEventPayload {
+                waybill_id: d.id,
+                driver_id: d.driver_id,
+                pit_id: d.pit_id,
+                pit_name,
+                serial_no: d.serial_no,
+            }));
+        }
+    }
+
     Ok(Json(WaybillActionResponse {
         id: row.get("id"),
         status: row.get("status"),
@@ -231,14 +299,22 @@ async fn arrive_waybill(
     }
 
     let now = Utc::now();
+
+    // 如果 arrival_source 是 plate_scan，记录车牌识别日志
+    if payload.arrival_source == "plate_scan" {
+        // 车牌号可以从额外字段获取，这里简化处理
+        trace!("waybill {waybill_id} arrived via plate scan");
+    }
+
     let row = sqlx::query(
-        "UPDATE waybills SET status = 'arrived', arrive_time = $2, updated_at = $2, \
-         version = version + 1 \
+        "UPDATE waybills SET status = 'arrived', arrive_time = $2, \
+         arrival_source = $3, updated_at = $2, version = version + 1 \
          WHERE id = $1 AND status = 'dispatched' \
          RETURNING id, status::text AS status, arrive_time",
     )
     .bind(waybill_id)
     .bind(now)
+    .bind(&payload.arrival_source)
     .fetch_optional(&state.db)
     .await
     .map_err(|err| ApiError::internal(format!("failed to mark waybill arrived: {err}")))?;
@@ -246,6 +322,76 @@ async fn arrive_waybill(
     let row = row.ok_or_else(|| {
         ApiError::conflict("waybill can only be marked arrived from dispatched status")
     })?;
+
+    // ── 操作日志 ─────────────────────────────────────────────────
+    log_waybill_operation(
+        &state.db, waybill_id, "arrive", Some("dispatched"), Some("arrived"),
+        None, Some(&payload.arrival_source),
+    ).await;
+
+    Ok(Json(WaybillActionResponse {
+        id: row.get("id"),
+        status: row.get("status"),
+        at: row.get("arrive_time"),
+    }))
+}
+
+/// 通过车牌号自动到场
+#[derive(Deserialize)]
+pub struct ArriveByPlateRequest {
+    pub driver_id: Uuid,
+    pub plate_number: String,
+    pub confidence: Option<f32>,
+}
+
+pub async fn arrive_by_plate(
+    State(state): State<AppState>,
+    Json(payload): Json<ArriveByPlateRequest>,
+) -> Result<Json<WaybillActionResponse>, ApiError> {
+    // 1. 查找该司机的已派单运单
+    let waybill = sqlx::query(
+        r#"SELECT id, status::text AS status FROM waybills
+           WHERE driver_id = $1 AND status = 'dispatched'
+           ORDER BY dispatch_time DESC LIMIT 1"#,
+    )
+    .bind(payload.driver_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| ApiError::internal(format!("failed to find active waybill: {e}")))?;
+
+    let Some(waybill) = waybill else {
+        return Err(ApiError::not_found("no active dispatched waybill found for this driver"));
+    };
+
+    let waybill_id: Uuid = waybill.get("id");
+
+    // 2. 记录车牌识别日志
+    sqlx::query(
+        r#"INSERT INTO plate_scan_logs (waybill_id, plate_number, confidence, matched, scan_source)
+           VALUES ($1, $2, $3, true, 'app')"#,
+    )
+    .bind(waybill_id)
+    .bind(&payload.plate_number)
+    .bind(payload.confidence)
+    .execute(&state.db)
+    .await
+    .map_err(|e| ApiError::internal(format!("failed to log plate scan: {e}")))?;
+
+    // 3. 自动到场
+    let now = Utc::now();
+    let row = sqlx::query(
+        "UPDATE waybills SET status = 'arrived', arrive_time = $2, \
+         arrival_source = 'plate_scan', updated_at = $2, version = version + 1 \
+         WHERE id = $1 AND status = 'dispatched' \
+         RETURNING id, status::text AS status, arrive_time",
+    )
+    .bind(waybill_id)
+    .bind(now)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| ApiError::internal(format!("failed to arrive by plate: {e}")))?;
+
+    let row = row.ok_or_else(|| ApiError::conflict("waybill can only be marked arrived from dispatched status"))?;
 
     Ok(Json(WaybillActionResponse {
         id: row.get("id"),
@@ -281,6 +427,12 @@ async fn cancel_waybill(
     let row = row.ok_or_else(|| {
         ApiError::conflict("completed or cancelled waybill cannot be cancelled again")
     })?;
+
+    // ── 操作日志 ─────────────────────────────────────────────────
+    log_waybill_operation(
+        &state.db, waybill_id, "cancel", None, Some("cancelled"),
+        Some(payload.cancelled_by), Some(payload.reason.trim()),
+    ).await;
 
     Ok(Json(WaybillActionResponse {
         id: row.get("id"),

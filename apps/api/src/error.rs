@@ -72,3 +72,32 @@ impl IntoResponse for ApiError {
             .into_response()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_status_codes() {
+        assert_eq!(ApiError::bad_request("x").status, StatusCode::BAD_REQUEST);
+        assert_eq!(ApiError::unauthorized("x").status, StatusCode::UNAUTHORIZED);
+        assert_eq!(ApiError::not_found("x").status, StatusCode::NOT_FOUND);
+        assert_eq!(ApiError::conflict("x").status, StatusCode::CONFLICT);
+        assert_eq!(ApiError::internal("x").status, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn test_error_codes() {
+        assert_eq!(ApiError::bad_request("x").code, "bad_request");
+        assert_eq!(ApiError::unauthorized("x").code, "unauthorized");
+        assert_eq!(ApiError::not_found("x").code, "not_found");
+        assert_eq!(ApiError::conflict("x").code, "conflict");
+        assert_eq!(ApiError::internal("x").code, "internal_error");
+    }
+
+    #[test]
+    fn test_error_messages() {
+        let err = ApiError::bad_request("invalid input");
+        assert_eq!(err.message, "invalid input");
+    }
+}

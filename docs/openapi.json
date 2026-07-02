@@ -1,0 +1,494 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "矿山自动化调度系统 API",
+    "description": "面向矿山运输调度场景的数字化管理 API，覆盖运单、排队、装车、称重、看板、告警、调度算法等完整业务链路。",
+    "version": "0.1.0"
+  },
+  "servers": [
+    { "url": "http://localhost:3000", "description": "开发环境" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "PagedResponse": {
+        "type": "object",
+        "properties": {
+          "data": { "type": "array" },
+          "total": { "type": "integer" },
+          "page": { "type": "integer" },
+          "page_size": { "type": "integer" },
+          "total_pages": { "type": "integer" }
+        }
+      },
+      "ErrorBody": {
+        "type": "object",
+        "properties": {
+          "code": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  },
+  "security": [{ "BearerAuth": [] }],
+  "paths": {
+    "/health": {
+      "get": { "summary": "健康检查", "tags": ["系统"], "security": [] }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "summary": "用户登录",
+        "tags": ["认证"],
+        "security": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["username", "password"],
+                "properties": {
+                  "username": { "type": "string" },
+                  "password": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "access_token": { "type": "string" },
+                    "refresh_token": { "type": "string" },
+                    "role": { "type": "string" },
+                    "display_name": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/refresh": {
+      "post": {
+        "summary": "刷新令牌",
+        "tags": ["认证"],
+        "security": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["refresh_token"],
+                "properties": { "refresh_token": { "type": "string" } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/drivers": {
+      "get": {
+        "summary": "司机列表（分页）",
+        "tags": ["司机管理"],
+        "parameters": [
+          { "name": "keyword", "in": "query", "schema": { "type": "string" } },
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["idle", "working", "offline"] } },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
+          { "name": "page_size", "in": "query", "schema": { "type": "integer", "default": 20, "maximum": 100 } }
+        ]
+      },
+      "post": {
+        "summary": "创建司机",
+        "tags": ["司机管理"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "phone", "license_plate", "vehicle_type", "capacity_ton"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "phone": { "type": "string" },
+                  "license_plate": { "type": "string" },
+                  "vehicle_type": { "type": "string", "enum": ["dump_truck", "trailer", "other"] },
+                  "capacity_ton": { "type": "number" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/drivers/{driver_id}": {
+      "get": { "summary": "司机详情", "tags": ["司机管理"] }
+    },
+    "/api/v1/drivers/import": {
+      "post": {
+        "summary": "批量导入司机",
+        "tags": ["司机管理"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["source", "drivers"],
+                "properties": {
+                  "source": { "type": "string" },
+                  "drivers": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["name", "phone", "license_plate", "vehicle_type", "capacity_ton"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pits": {
+      "get": { "summary": "坑口列表（分页）", "tags": ["坑口管理"] },
+      "post": {
+        "summary": "创建坑口",
+        "tags": ["坑口管理"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "code": { "type": "string" },
+                  "location_text": { "type": "string" },
+                  "queue_capacity": { "type": "integer" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pits/{pit_id}": {
+      "get": { "summary": "坑口详情", "tags": ["坑口管理"] }
+    },
+    "/api/v1/waybills": {
+      "get": {
+        "summary": "运单列表（分页）",
+        "tags": ["运单管理"],
+        "parameters": [
+          { "name": "status", "in": "query", "schema": { "type": "string" } },
+          { "name": "pit_id", "in": "query", "schema": { "type": "string", "format": "uuid" } },
+          { "name": "page", "in": "query", "schema": { "type": "integer" } },
+          { "name": "page_size", "in": "query", "schema": { "type": "integer" } }
+        ]
+      },
+      "post": {
+        "summary": "创建运单",
+        "tags": ["运单管理"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["driver_id", "pit_id"],
+                "properties": {
+                  "driver_id": { "type": "string", "format": "uuid" },
+                  "pit_id": { "type": "string", "format": "uuid" },
+                  "estimated_weight_ton": { "type": "number" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/waybills/{waybill_id}": {
+      "get": { "summary": "运单详情", "tags": ["运单管理"] }
+    },
+    "/api/v1/waybills/{waybill_id}/dispatch": {
+      "post": {
+        "summary": "派单",
+        "tags": ["运单管理"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["dispatcher_id"],
+                "properties": { "dispatcher_id": { "type": "string", "format": "uuid" } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/waybills/{waybill_id}/arrive": {
+      "post": {
+        "summary": "手动到场",
+        "tags": ["运单管理"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["arrival_source"],
+                "properties": { "arrival_source": { "type": "string" } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/waybills/arrive-by-plate": {
+      "post": {
+        "summary": "车牌识别到场",
+        "tags": ["运单管理"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["driver_id", "plate_number"],
+                "properties": {
+                  "driver_id": { "type": "string", "format": "uuid" },
+                  "plate_number": { "type": "string" },
+                  "confidence": { "type": "number" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/waybills/{waybill_id}/cancel": {
+      "post": {
+        "summary": "取消运单",
+        "tags": ["运单管理"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["cancelled_by", "reason"],
+                "properties": {
+                  "cancelled_by": { "type": "string", "format": "uuid" },
+                  "reason": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/queue/pits/{pit_id}": {
+      "get": { "summary": "查看坑口队列", "tags": ["排队管理"] }
+    },
+    "/api/v1/queue/waybills/{waybill_id}/join": {
+      "post": {
+        "summary": "加入队列",
+        "tags": ["排队管理"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["driver_id", "pit_id", "arrival_method"],
+                "properties": {
+                  "driver_id": { "type": "string", "format": "uuid" },
+                  "pit_id": { "type": "string", "format": "uuid" },
+                  "arrival_method": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/queue/waybills/{waybill_id}/call-next": {
+      "post": {
+        "summary": "叫号",
+        "tags": ["排队管理"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["operator_id"],
+                "properties": {
+                  "operator_id": { "type": "string", "format": "uuid" },
+                  "reason": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/loading/waybills/{waybill_id}/start": {
+      "post": {
+        "summary": "开始装车",
+        "tags": ["装车管理"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["operator_id"],
+                "properties": {
+                  "operator_id": { "type": "string", "format": "uuid" },
+                  "loader_name": { "type": "string" },
+                  "notes": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/loading/waybills/{waybill_id}/finish": {
+      "post": {
+        "summary": "结束装车",
+        "tags": ["装车管理"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["operator_id"],
+                "properties": {
+                  "operator_id": { "type": "string", "format": "uuid" },
+                  "notes": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/weighing/waybills/{waybill_id}": {
+      "post": {
+        "summary": "称重完单",
+        "tags": ["称重管理"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["operator_id", "gross_weight_ton", "net_weight_ton"],
+                "properties": {
+                  "operator_id": { "type": "string", "format": "uuid" },
+                  "gross_weight_ton": { "type": "number" },
+                  "tare_weight_ton": { "type": "number" },
+                  "net_weight_ton": { "type": "number" },
+                  "source": { "type": "string" },
+                  "note": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dashboard/overview": {
+      "get": { "summary": "运营看板概览", "tags": ["看板"] }
+    },
+    "/api/v1/dashboard/pit-efficiency": {
+      "get": { "summary": "坑口效率分析", "tags": ["看板"] }
+    },
+    "/api/v1/dashboard/driver-ranking": {
+      "get": { "summary": "司机排行榜", "tags": ["看板"] }
+    },
+    "/api/v1/alerts": {
+      "get": { "summary": "告警列表（分页）", "tags": ["告警管理"] }
+    },
+    "/api/v1/alerts/{alert_id}/resolve": {
+      "post": { "summary": "标记告警已处理", "tags": ["告警管理"] }
+    },
+    "/api/v1/dispatch/recommendations": {
+      "get": {
+        "summary": "智能调度推荐",
+        "tags": ["调度算法"],
+        "parameters": [
+          { "name": "top_n", "in": "query", "schema": { "type": "integer", "default": 5 } }
+        ]
+      }
+    },
+    "/api/v1/system/dispatch-mode": {
+      "get": { "summary": "获取调度模式", "tags": ["系统配置"] },
+      "post": {
+        "summary": "切换调度模式",
+        "tags": ["系统配置"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": { "mode": { "type": "string", "enum": ["pure_algorithm", "ai_enhanced"] } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/system-config": {
+      "get": { "summary": "获取完整系统配置", "tags": ["系统配置"] }
+    },
+    "/api/v1/missions": {
+      "get": { "summary": "任务列表（分页）", "tags": ["无人矿卡"] },
+      "post": { "summary": "创建任务", "tags": ["无人矿卡"] }
+    },
+    "/api/v1/missions/pending": {
+      "get": { "summary": "获取待执行任务", "tags": ["无人矿卡"] }
+    },
+    "/api/v1/offline/sync": {
+      "post": { "summary": "离线操作批量同步", "tags": ["离线调度"] }
+    },
+    "/api/v1/scale/devices": {
+      "get": { "summary": "地磅设备列表", "tags": ["地磅采集"] },
+      "post": { "summary": "注册地磅设备", "tags": ["地磅采集"] }
+    },
+    "/api/v1/fence/fences": {
+      "get": { "summary": "电子围栏列表", "tags": ["电子围栏"] },
+      "post": { "summary": "创建围栏", "tags": ["电子围栏"] }
+    },
+    "/api/v1/fence/report": {
+      "post": { "summary": "上报位置", "tags": ["电子围栏"] }
+    },
+    "/ws": {
+      "get": { "summary": "WebSocket 实时推送", "tags": ["实时通信"], "security": [] }
+    }
+  },
+  "tags": [
+    { "name": "系统", "description": "健康检查等系统接口" },
+    { "name": "认证", "description": "登录、令牌刷新" },
+    { "name": "司机管理", "description": "司机 CRUD、搜索、批量导入" },
+    { "name": "坑口管理", "description": "坑口 CRUD、队列统计" },
+    { "name": "运单管理", "description": "运单全生命周期管理" },
+    { "name": "排队管理", "description": "排队、叫号、离队" },
+    { "name": "装车管理", "description": "装车开始/结束" },
+    { "name": "称重管理", "description": "称重完单" },
+    { "name": "看板", "description": "运营数据看板" },
+    { "name": "告警管理", "description": "异常记录查询与处理" },
+    { "name": "调度算法", "description": "WPMA 智能调度推荐" },
+    { "name": "系统配置", "description": "运行时调度模式切换" },
+    { "name": "无人矿卡", "description": "无人驾驶矿卡任务调度" },
+    { "name": "离线调度", "description": "移动端离线操作同步" },
+    { "name": "地磅采集", "description": "地磅设备管理与称重" },
+    { "name": "电子围栏", "description": "围栏管理与位置上报" },
+    { "name": "实时通信", "description": "WebSocket 事件推送" }
+  ]
+}

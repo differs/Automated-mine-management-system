@@ -9,6 +9,7 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use crate::{error::ApiError, state::AppState};
+use super::ws::{broadcast_event, LoadingEventPayload, WsEvent};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -106,6 +107,21 @@ async fn start_loading(
         .await
         .map_err(|err| ApiError::internal(format!("failed to commit loading start: {err}")))?;
 
+    // ── WebSocket 广播：装车开始 ──────────────────────────────────
+    // 从 waybills 查询 driver_id（装车开始时 waybill 已在事务中锁定过，此处重新查询获取 driver_id）
+    let driver_id = sqlx::query_scalar::<_, Uuid>("SELECT driver_id FROM waybills WHERE id = $1")
+        .bind(waybill_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    broadcast_event(&state.ws_tx, WsEvent::LoadingStarted(LoadingEventPayload {
+        waybill_id,
+        driver_id,
+        pit_id,
+    }));
+
     Ok(Json(LoadingActionResponse {
         waybill_id: updated.get("id"),
         status: updated.get("status"),
@@ -177,6 +193,22 @@ async fn finish_loading(
     tx.commit()
         .await
         .map_err(|err| ApiError::internal(format!("failed to commit loading finish: {err}")))?;
+
+    // ── WebSocket 广播：装车完成 ──────────────────────────────────
+    let waybill_info = sqlx::query("SELECT driver_id, pit_id FROM waybills WHERE id = $1")
+        .bind(waybill_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+    let (driver_id, pit_id) = waybill_info
+        .map(|r| (r.get("driver_id"), r.get("pit_id")))
+        .unwrap_or((Uuid::nil(), Uuid::nil()));
+    broadcast_event(&state.ws_tx, WsEvent::LoadingFinished(LoadingEventPayload {
+        waybill_id,
+        driver_id,
+        pit_id,
+    }));
 
     Ok(Json(LoadingActionResponse {
         waybill_id: updated.get("id"),

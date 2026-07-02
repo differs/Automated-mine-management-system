@@ -1,13 +1,13 @@
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     routing::get,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
 
-use crate::{error::ApiError, state::AppState};
+use crate::{error::ApiError, pagination::{Pagination, PagedResponse}, state::AppState};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -21,6 +21,12 @@ pub struct CreatePitRequest {
     pub code: Option<String>,
     pub location_text: Option<String>,
     pub queue_capacity: Option<i32>,
+}
+
+#[derive(Deserialize)]
+pub struct PitListQuery {
+    #[serde(flatten)]
+    pub pagination: Pagination,
 }
 
 #[derive(Serialize)]
@@ -67,27 +73,45 @@ struct PitDetailRow {
     is_active: bool,
 }
 
-async fn list_pits(State(state): State<AppState>) -> Result<Json<Vec<PitSummary>>, ApiError> {
+async fn list_pits(
+    State(state): State<AppState>,
+    Query(query): Query<PitListQuery>,
+) -> Result<Json<PagedResponse<PitSummary>>, ApiError> {
+    let (offset, limit) = query.pagination.offset_limit();
+
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*)::bigint FROM pits")
+        .fetch_one(&state.db)
+        .await
+        .map_err(|err| ApiError::internal(format!("failed to count pits: {err}")))?;
+
     let rows = sqlx::query_as::<_, PitSummaryRow>(
         "SELECT id, name, code, current_queue_count, avg_wait_minutes, is_active \
-         FROM pits ORDER BY created_at DESC LIMIT 100",
+         FROM pits ORDER BY created_at DESC LIMIT $1 OFFSET $2",
     )
+    .bind(limit)
+    .bind(offset)
     .fetch_all(&state.db)
     .await
     .map_err(|err| ApiError::internal(format!("failed to list pits: {err}")))?;
 
-    Ok(Json(
-        rows.into_iter()
-            .map(|row| PitSummary {
-                id: row.id,
-                name: row.name,
-                code: row.code.unwrap_or_default(),
-                current_queue_count: row.current_queue_count,
-                avg_wait_minutes: row.avg_wait_minutes,
-                is_active: row.is_active,
-            })
-            .collect(),
-    ))
+    let data: Vec<PitSummary> = rows
+        .into_iter()
+        .map(|row| PitSummary {
+            id: row.id,
+            name: row.name,
+            code: row.code.unwrap_or_default(),
+            current_queue_count: row.current_queue_count,
+            avg_wait_minutes: row.avg_wait_minutes,
+            is_active: row.is_active,
+        })
+        .collect();
+
+    Ok(Json(PagedResponse::new(
+        data,
+        total,
+        query.pagination.page(),
+        query.pagination.page_size(),
+    )))
 }
 
 async fn create_pit(

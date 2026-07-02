@@ -3,11 +3,20 @@
   "private": true,
   "version": "0.1.0",
   "workspaces": [
-    "apps/admin-web"
+    "apps/admin-web",
+    "apps/driver-miniapp",
+    "apps/pit-h5",
+    "apps/demo-hub"
   ],
   "scripts": {
     "dev:admin": "npm --workspace apps/admin-web run dev",
-    "build:admin": "npm --workspace apps/admin-web run build"
+    "dev:driver": "npm --workspace apps/driver-miniapp run dev",
+    "dev:pit": "npm --workspace apps/pit-h5 run dev",
+    "dev:demo": "npm --workspace apps/demo-hub run dev",
+    "build:admin": "npm --workspace apps/admin-web run build",
+    "build:driver": "npm --workspace apps/driver-miniapp run build",
+    "build:pit": "npm --workspace apps/pit-h5 run build",
+    "build:demo": "npm --workspace apps/demo-hub run build",
+    "build:all": "npm run build:admin && npm run build:driver && npm run build:pit && npm run build:demo"
   }
 }
-
