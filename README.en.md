@@ -2,149 +2,228 @@
 
 [中文版本](./README.md)
 
-This repository is the product foundation for a mine transportation dispatch system.
-
-The goal is not to build just another admin panel. The goal is to digitize the most important operational loop inside a mine transportation business: dispatching, vehicle arrival, queue management, loading, weighing, completion, and operational visibility.
+A digital dispatch system for mine transportation operations. Digitizes the core business loop from dispatching, vehicle arrival, queue management, loading, weighing, to completion and data aggregation — replacing WeChat groups, phone calls, and Excel spreadsheets.
 
 ## Product Positioning
 
-The system is designed to solve three practical problems in mine logistics:
+Solves three core problems in mine logistics:
 
-- Low dispatch efficiency: jobs are assigned through calls and chat groups
-- Poor field order: pit queues are opaque and easy to manipulate
-- Delayed business visibility: trips, tonnage, and exceptions are still aggregated manually
+- **Low dispatch efficiency**: jobs assigned through calls and chat groups with no synchronization
+- **Poor field order**: pit queues are opaque, causing disputes and queue-jumping
+- **Delayed business visibility**: trips, tonnage, exceptions, and efficiency are manually aggregated
 
-The first release focuses on three outcomes:
+Phase-one goals:
 
-- Operable: the dispatch-to-completion loop works end to end
-- Controllable: key actions are traceable and manual overrides are recorded
-- Visible: dispatch rooms can monitor vehicles, pits, queues, work orders, and alerts in real time
+- Operable: dispatch-to-completion loop works end to end
+- Controllable: key actions are traceable, manual overrides recorded, audit logs maintained
+- Visible: dispatch room real-time dashboard for vehicles, pits, work orders, queues, and alerts
 
-## Core Users
+## Tech Stack
 
-- Dispatcher: assigns jobs and handles exceptions
-- Driver: receives tasks, checks in, tracks queue status, views history
-- Pit operator: verifies vehicles, manages the line, confirms loading
-- Weighbridge operator: records weights and completes the trip
-- Finance / operations: reviews tonnage, trips, throughput, and settlement data
+| Layer | Technology | Notes |
+|-------|-----------|-------|
+| Backend | Rust (axum 0.8 + sqlx 0.8) | High-performance async API |
+| Cache | Redis 7 | Queue count cache, dashboard cache, rate limiting |
+| Database | PostgreSQL 16 | Business database, 20+ tables |
+| Frontend | Vue 3 + Vite 6 + TypeScript | Dispatch console web app |
+| Mobile | Flutter | Driver + pit operation apps |
+| Deployment | Docker Compose | One-command startup |
+| Auth | JWT (HS256) | access token 24h + refresh token 30d |
+| Realtime | WebSocket | 7 event types, JWT authenticated |
+| Algorithm | WPMA + AI Enhanced | Pure algorithm / Pangu LLM dual mode, runtime switchable |
 
-## MVP Scope
+## Feature Modules
 
-The first version targets the shortest business loop instead of a feature-heavy platform.
+### Backend API (19 modules)
 
-- Dispatch console: Web application
-- Driver mobile app: Flutter
-- Pit operation app: Flutter app or lightweight H5 client
-- Real-time queue state: Redis
-- Core business database: PostgreSQL
-- Real-time notifications: WebSocket
-- Operational dashboards: Vite-based front-end views
+| Module | Function | Highlights |
+|--------|----------|------------|
+| **auth** | Login / token refresh | bcrypt verification, dual token |
+| **driver** | CRUD + search + batch import | Keyword search, unique constraints |
+| **pit** | CRUD | Real-time queue count |
+| **waybill** | Full lifecycle | 9-state machine, 4 arrival methods |
+| **queue** | Join / call-next / leave | Transaction + row lock, Redis write-through |
+| **loading** | Start / finish | Transaction control, record linkage |
+| **weighing** | Weigh and complete | Non-negative validation, auto-complete |
+| **dashboard** | Operations overview | LATERAL JOIN queries, Redis 30s cache |
+| **dispatch** | Smart dispatch recommendation | WPMA algorithm + AI enhancement |
+| **ai** | Dispatch algorithm engine | WPMA weighted priority matching + Pangu LLM |
+| **ws** | WebSocket push | 7 event types, JWT authenticated |
+| **alert** | Alert management | QueryBuilder safe queries |
+| **fence** | Geofence | Haversine distance, auto-arrival |
+| **scale** | Weighbridge auto-collect | Serial / bluetooth, anti-cheat validation |
+| **missions** | Autonomous mine truck tasks | claim / status / complete flow |
+| **offline** | Offline sync | Idempotency keys + optimistic locking, transactional |
+| **system_config** | Runtime config | Algorithm / AI mode switch (Arc\<RwLock\>) |
+| **audit_log** | Operation audit | Fire-and-forget logging |
+| **health** | Health check + OpenAPI | `GET /docs/openapi.json` |
 
-## Technical Direction
+### Waybill State Machine
 
-- Backend: Rust
-- Frontend: Vite
-- Mobile: Flutter
-- Database: PostgreSQL
-- Cache and live queue state: Redis
-- Deployment: Docker + Nginx
+```
+pending_dispatch → dispatched → arrived → queueing → loading → loaded → weighing → completed
+                  ↓
+               cancelled (any non-terminal state, reason required)
+```
 
-Recommended Rust stack:
+**Four arrival methods**: manual check-in, plate scan, geofence auto-arrival, offline sync
 
-- `axum` for HTTP APIs and WebSocket
-- `sqlx` for database access and migrations
-- `tokio` as the async runtime
-- `redis` for queue state and short-lived data
-- `serde` for serialization
+### Middleware
 
-## Repository Contents
+- **JWT Auth**: protected routes auto-verify Bearer token
+- **Redis Rate Limiting**: sliding window 100 requests / 60s / IP
+- **CORS**: cross-origin support
+- **Request Tracing**: TraceLayer
 
-- `docs/product-overview.md`: product-facing project introduction
-- `docs/requirements-baseline.md`: MVP requirements baseline
-- `docs/architecture.md`: architecture and implementation guidance
-- `docs/scenario-coverage-analysis.md`: field-scenario coverage review
-- `db/init.sql`: initial PostgreSQL schema
-- `db/migrations/`: MVP and field-extension SQL migrations
+### Frontend Applications
 
-## Monorepo Layout
+- **admin-web**: Dispatch console (8 pages + 4 reusable components)
+- **driver-miniapp**: Driver H5 (lightweight)
+- **pit-h5**: Pit operation H5 (lightweight)
+- **demo-hub**: Demo portal
+
+### Flutter Applications
+
+- **driver-app**: Driver App (task display, check-in, plate recognition, offline sync)
+- **pit-app**: Pit App (vehicle verification, queue management, loading confirmation)
+- **shared**: Shared library (offline engine + plate OCR + geofence)
+
+### Database
+
+- 5 migrations, 20+ tables
+- PostgreSQL enum types (6 status enums)
+- Optimistic locking (waybills.version)
+- Conditional unique index (single active waybill per driver)
+- Check constraints (non-negative weight, cancel requires reason)
+
+## Project Structure
 
 ```text
 apps/
-  admin-web/   Vite admin console
-  api/         Rust API service
-  driver-app/  Flutter driver app
-  pit-app/     Flutter pit operation app
+  api/              Rust API service (19 business modules)
+  admin-web/        Vue 3 dispatch console
+  driver-app/       Flutter driver app
+  driver-miniapp/   Driver H5
+  pit-app/          Flutter pit app
+  pit-h5/           Pit H5
+  demo-hub/         Demo portal
+  shared/           Flutter shared library (offline + plate + geofence)
 db/
-docs/
+  init.sql          Database initialization script
+  migrations/       5 migration files
+docs/               40+ technical docs + OpenAPI spec
+scripts/            Scraper and email scripts
 ```
 
 ## Local Run
 
-Start PostgreSQL, run migrations, and launch the API:
+### Start Backend
 
 ```bash
 docker compose up --build
 ```
 
-PostgreSQL stays inside the compose network to avoid conflicts with existing host databases. The API is still exposed on local port `3000`.
+PostgreSQL and Redis run inside the compose network. API exposed on local port `3000`.
 
-Run migrations only:
+### Start Frontend
+
+```bash
+# Install dependencies (first time)
+npm install
+
+# Dispatch console (port 5173)
+npm run dev:admin
+
+# Driver app (port 5174)
+npm run dev:driver
+
+# Pit app (port 5175)
+npm run dev:pit
+
+# Demo portal (port 5180)
+npm run dev:demo
+```
+
+All frontend dev servers auto-proxy `/api` requests to `localhost:3000`.
+
+### Build Frontend
+
+```bash
+npm run build:all
+# Or individually
+npm run build:admin
+npm run build:driver
+npm run build:pit
+npm run build:demo
+```
+
+### Run Tests
+
+```bash
+# In container (recommended)
+docker compose run --rm api-test
+
+# On host
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres cargo test -p api
+```
+
+### Run Migrations
 
 ```bash
 cargo run -p api --bin migrate
 ```
 
-Run API integration tests:
+## API Documentation
 
-```bash
-docker compose run --rm api-test
-```
+- OpenAPI spec: `GET /docs/openapi.json`
+- Full API reference: `docs/api-reference.md`
+- Deployment guide: `docs/deployment-guide.md`
 
-If you run tests directly on the host, provide a PostgreSQL connection that can create temporary test databases, for example:
+## Algorithm
 
-```bash
-DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres cargo test -p api
-```
+Dispatch algorithm based on **generic framework + terrain adaptation**:
 
-Collection routes are currently used without a trailing slash, for example:
+- **WPMA Algorithm**: Weighted Priority Matching (idle 0.3 + workload 0.2 + distance 0.3 + pit priority 0.2)
+- **AI Enhanced Mode**: Pangu LLM optimization
+- **Dual Mode Switch**: `POST /api/v1/system/dispatch-mode` runtime switchable
+- **Congestion Prediction**: threshold-based (>10 high, >5 medium, others low)
+- **Anomaly Detection**: timeout rules (>30min anomaly, >15min warning)
 
-- `POST /api/v1/drivers`
-- `POST /api/v1/pits`
-- `POST /api/v1/waybills`
+See `docs/dispatch-algorithm.md` for details.
 
-## Current Backend API Skeleton
+## Documentation
 
-The phase-one resource groups already scaffolded are:
+| Document | Description |
+|----------|-------------|
+| `docs/architecture.md` | System architecture |
+| `docs/api-reference.md` | API reference |
+| `docs/deployment-guide.md` | Deployment guide |
+| `docs/database-schema.md` | Database schema |
+| `docs/dispatch-algorithm.md` | Dispatch algorithm |
+| `docs/development-guide.md` | Development guide |
+| `docs/user-manual.md` | User manual |
+| `docs/phase-plan.md` | Phased implementation plan |
+| `docs/openapi.json` | OpenAPI 3.0 spec |
 
-- `auth`: login and token refresh
-- `driver`: list, detail, create, import
-- `pit`: list, detail, create
-- `waybill`: list, detail, create, dispatch, arrive, cancel
-- `queue`: pit queue view, join, call-next, leave
+## User Roles
 
-At this stage the backend provides stable route boundaries, request shapes, and response shapes. The next step is replacing mock payloads with real database-backed flows.
+- **Dispatcher**: global view, assign tasks, handle exceptions, view AI recommendations
+- **Driver**: receive tasks, check in, view queue status, view history
+- **Pit Operator**: verify vehicles, manage queue, confirm loading
+- **Weighbridge Operator**: record weights, complete trips
+- **Finance / Operations**: review throughput, trips, tonnage, settlement data
 
-The main production flow already backed by PostgreSQL includes:
+## Test Coverage
 
-- driver create, list, detail
-- pit create, list, detail
-- waybill create, dispatch, arrive, cancel
-- queue join, call-next, manual leave
-- loading start and finish
-- weighing and completion
-
-## Phase-One Goal
-
-Phase one is about operational standardization before optimization.
-
-1. Every waybill has a clear state, owner, and timeline
-2. Every pit queue is visible, controlled, and auditable
-3. Daily trips, tonnage, exceptions, and efficiency metrics are captured automatically
+- 22 unit tests (config, error, pagination, auth, ai modules)
+- 2 integration tests (full waybill flow, status validation)
+- All passing
 
 ## Future Expansion
 
-- License plate recognition and camera integration
-- Automated weighbridge integration
-- Dispatch recommendation and pit balancing
-- Exception detection and congestion prediction
-- Production, sales, and settlement integration
+- Report export (CSV/Excel)
+- Multi-tenant isolation
+- Financial settlement module
+- Notifications (SMS / WeChat)
+- App store publication (iOS / Android)
+- PostGIS spatial index optimization
